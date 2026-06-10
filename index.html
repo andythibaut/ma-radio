@@ -19,6 +19,9 @@
     .app { width: 100%; max-width: 400px; }
     .app-title { font-size: 11px; font-weight: 500; letter-spacing: 0.12em;
       text-transform: uppercase; color: var(--text3); text-align: center; margin-bottom: 1.75rem; }
+    .schedule-info { font-size: 12px; color: var(--text3); text-align: center;
+      margin-bottom: 1.25rem; line-height: 1.6; }
+    .schedule-info span { color: var(--text2); font-weight: 500; }
     .now-playing { background: var(--surface); border-radius: var(--radius);
       padding: 1.25rem 1.5rem; margin-bottom: 1rem; display: flex; align-items: center;
       gap: 16px; min-height: 90px; border: 0.5px solid var(--border); }
@@ -69,22 +72,30 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .station-genre { font-size: 11px; color: var(--text2); margin-top: 2px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .next-switch { font-size: 11px; color: var(--text3); text-align: center; margin-top: 1rem; }
+    .next-switch span { color: var(--text2); }
   </style>
 </head>
 <body>
 <div class="app">
   <p class="app-title">Ma Radio</p>
+
+  <p class="schedule-info">
+    <span>RMC</span> 07h–15h &nbsp;·&nbsp; <span>RTL</span> 15h–07h
+  </p>
+
   <div class="now-playing">
     <div class="np-logo" id="npLogo">—</div>
     <div class="np-info">
-      <div class="np-name" id="npName">Sélectionnez</div>
-      <div class="np-slogan" id="npSlogan">une station ci-dessous</div>
+      <div class="np-name" id="npName">Chargement…</div>
+      <div class="np-slogan" id="npSlogan"></div>
       <div class="np-status" id="npStatus">
         <div class="dot" id="dot"></div>
         <span id="statusText"></span>
       </div>
     </div>
   </div>
+
   <div class="controls">
     <button class="btn-play" id="btnPlay" aria-label="Lecture / Pause">
       <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -95,33 +106,37 @@
       <span class="vol-label" id="volVal">80</span>
     </div>
   </div>
+
   <div class="error-banner" id="errorBanner">Flux indisponible.</div>
+
   <div class="station-grid" id="stationGrid"></div>
+
+  <p class="next-switch" id="nextSwitch"></p>
 </div>
+
 <script>
 const PLAY  = '<path d="M8 5v14l11-7z"/>';
 const PAUSE = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
 
-const stations = [
-  { id:"rtl", name:"RTL", label:"RTL",
-    slogan:"Première radio de France", genre:"Actualités • Talk", color:"#c0392b",
-    isHLS:false,
-    streams:["https://icecast.rtl.fr/rtl-1-44-128","https://streaming.radio.rtl.fr/rtl-1-44-128","http://streaming.radio.rtl.fr/rtl-1-44-128"] },
-  { id:"rmc", name:"RMC", label:"RMC",
+const stations = {
+  rmc: {
+    id:"rmc", name:"RMC", label:"RMC",
     slogan:"Info, talk, sport", genre:"Info • Sport • Débats", color:"#1a73e8",
-    isHLS:false,
-    streams:["https://audio.bfmtv.com/rmcradio_128.mp3","http://chai5she.cdn.dvmr.fr/rmcinfo"] },
-  { id:"franceinfo", name:"France Info", label:"France\nInfo",
-    slogan:"Et tout est plus clair", genre:"Info en continu", color:"#b71c1c",
-    isHLS:false,
-    streams:["https://icecast.radiofrance.fr/franceinfo-hifi.aac?id=radiofrance","https://direct.franceinfo.fr/live/franceinfo-midfi.mp3","http://direct.franceinfo.fr/live/franceinfo-midfi.mp3"] },
-  { id:"rmcgold", name:"RMC Gold", label:"RMC\nGold",
-    slogan:"100% années 80-90", genre:"Disco • Funk • Rock", color:"#8a6000",
-    isHLS:true,
-    streams:["https://hls-rmcgold.nextradiotv.com/ssai/32k/media.m3u8"] },
-];
+    streams:["https://audio.bfmtv.com/rmcradio_128.mp3","http://chai5she.cdn.dvmr.fr/rmcinfo"]
+  },
+  rtl: {
+    id:"rtl", name:"RTL", label:"RTL",
+    slogan:"Première radio de France", genre:"Actualités • Talk", color:"#c0392b",
+    streams:["https://icecast.rtl.fr/rtl-1-44-128","https://streaming.radio.rtl.fr/rtl-1-44-128","http://streaming.radio.rtl.fr/rtl-1-44-128"]
+  },
+};
 
-let current=null, playing=false, audio=null, hls=null, token=0;
+// Audios en parallèle — toujours connectés, volume 0 si inactif
+const audios = { rmc: null, rtl: null };
+let activeId = null;
+let appPlaying = false;
+let token = 0;
+
 const $ = id => document.getElementById(id);
 
 function setIcon(p){ $("playIcon").innerHTML = p ? PAUSE : PLAY; }
@@ -133,154 +148,4 @@ function setStatus(s){
   $("npStatus").className = "np-status on";
   if(s==="loading"){ $("dot").classList.add("loading"); $("statusText").textContent = "Chargement…"; }
   else if(s==="playing"){ $("dot").classList.add("playing"); $("statusText").textContent = "En direct"; }
-  else { $("dot").classList.add("error"); $("statusText").textContent = "Flux indisponible"; $("errorBanner").style.display = "block"; }
-}
-
-function stopAll(){
-  token++;
-  if(hls){ hls.destroy(); hls = null; }
-  if(audio){ audio.pause(); audio.src = ""; audio = null; }
-  playing = false;
-  setIcon(false);
-}
-
-function showError(){ setStatus("error"); playing = false; setIcon(false); }
-
-// Lecture MP3 classique avec fallback sur les streams suivants
-function playMP3(st, urlIndex, myToken){
-  if(myToken !== token) return;
-  if(urlIndex >= st.streams.length){ showError(); return; }
-
-  if(audio){ audio.pause(); audio.src = ""; audio = null; }
-
-  const a = new Audio();
-  a.volume = $("volSlider").value / 100;
-  a.src = st.streams[urlIndex];
-
-  a.onplaying = ()=>{
-    if(myToken !== token){ a.pause(); return; }
-    audio = a;
-    playing = true;
-    setIcon(true);
-    setStatus("playing");
-  };
-  a.onwaiting = ()=>{ if(playing && myToken === token) setStatus("loading"); };
-  a.onerror = ()=>{ if(myToken === token) playMP3(st, urlIndex + 1, myToken); };
-
-  a.play().catch(()=>{ if(myToken === token) playMP3(st, urlIndex + 1, myToken); });
-}
-
-// Lecture HLS — un seul flux, erreur directe si ça rate
-function playHLS(st, myToken){
-  if(myToken !== token) return;
-  if(audio){ audio.pause(); audio.src = ""; audio = null; }
-
-  const url = st.streams[0];
-  const a = new Audio();
-  a.volume = $("volSlider").value / 100;
-
-  function onSuccess(){
-    if(myToken !== token){ a.pause(); return; }
-    audio = a;
-    playing = true;
-    setIcon(true);
-    setStatus("playing");
-  }
-
-  if(window.Hls && Hls.isSupported()){
-    hls = new Hls({enableWorker:false});
-    hls.loadSource(url);
-    hls.attachMedia(a);
-    hls.on(Hls.Events.MANIFEST_PARSED, ()=>{
-      if(myToken !== token) return;
-      a.play().then(onSuccess).catch(()=>{ if(myToken === token) showError(); });
-    });
-    hls.on(Hls.Events.ERROR, (_, d)=>{ if(d.fatal && myToken === token) showError(); });
-  } else if(a.canPlayType("application/vnd.apple.mpegurl")){
-    a.src = url;
-    a.onplaying = onSuccess;
-    a.onerror = ()=>{ if(myToken === token) showError(); };
-    a.play().catch(()=>{ if(myToken === token) showError(); });
-  } else {
-    showError();
-  }
-}
-
-function loadHLSlib(callback){
-  if(window.Hls){ callback(); return; }
-  const s = document.createElement("script");
-  s.src = "https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js";
-  s.onload = callback;
-  s.onerror = callback; // on essaie quand même (canPlayType en fallback)
-  document.head.appendChild(s);
-}
-
-function startPlay(st){
-  stopAll();
-  const myToken = token;
-  setStatus("loading");
-  if(st.isHLS){
-    loadHLSlib(()=> playHLS(st, myToken));
-  } else {
-    playMP3(st, 0, myToken);
-  }
-}
-
-function selectStation(st){
-  document.querySelectorAll(".station-card").forEach(c => c.classList.remove("active"));
-  document.getElementById("card-" + st.id)?.classList.add("active");
-  $("npLogo").style.background = st.color;
-  $("npLogo").style.color = "#fff";
-  $("npLogo").textContent = st.label;
-  $("npName").textContent = st.name;
-  $("npSlogan").textContent = st.slogan;
-  current = st;
-  startPlay(st);
-}
-
-$("btnPlay").addEventListener("click", ()=>{
-  if(!current) return;
-  if(playing){ stopAll(); setStatus(null); }
-  else startPlay(current);
-});
-
-$("volSlider").addEventListener("input", ()=>{
-  const v = parseInt($("volSlider").value);
-  $("volVal").textContent = v;
-  if(audio) audio.volume = v / 100;
-});
-
-const grid = $("stationGrid");
-stations.forEach(s => {
-  const card = document.createElement("div");
-  card.className = "station-card";
-  card.id = "card-" + s.id;
-  card.innerHTML = `<div class="station-icon" style="background:${s.color}">${s.label}</div><div class="station-info"><div class="station-name">${s.name}</div><div class="station-genre">${s.genre}</div></div>`;
-  card.addEventListener("click", ()=> selectStation(s));
-  grid.appendChild(card);
-});
-</script>
-</body>
-</html>        audio.onerror=()=>{ if(myToken===token) showError(); };
-        audio.play().catch(()=>{ if(myToken===token) showError(); });
-      } else { showError(); }
-    }
-    if(window.Hls){ startHLS(); }
-    else{
-      const s=document.createElement("script");
-      s.src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js";
-      s.onload=startHLS;
-      s.onerror=()=>{ if(myToken===token) showError(); };
-      document.head.appendChild(s);
-    }
-    return;
-  }
-
-  audio = new Audio();
-  audio.volume = vol;
-  audio.src = url;
-  audio.onplaying = ()=>{ if(myToken!==token)return; playing=true; setIcon(true); setStatus("playing"); };
-  audio.onerror   = ()=>{ if(myToken===token) tryNext(); };
-  audio.onwaiting = ()=>{ if(playing && myToken===token) setStatus("loading"); };
-  audio.play().catch(()=>{ if(myToken===token) tryNext(); });
-}
+  else { $("dot").classList.add("error"); $("statusText").textContent = "Flux indisponible"; $("errorBanner").style.display = "block";
