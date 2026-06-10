@@ -148,4 +148,140 @@ function setStatus(s){
   $("npStatus").className = "np-status on";
   if(s==="loading"){ $("dot").classList.add("loading"); $("statusText").textContent = "Chargement…"; }
   else if(s==="playing"){ $("dot").classList.add("playing"); $("statusText").textContent = "En direct"; }
-  else { $("dot").classList.add("error"); $("statusText").textContent = "Flux indisponible"; $("errorBanner").style.display = "block";
+  else { $("dot").classList.add("error"); $("statusText").textContent = "Flux indisponible"; $("errorBanner").style.display = "block"; }
+}
+
+function updateUI(st){
+  $("npLogo").style.background = st.color;
+  $("npLogo").style.color = "#fff";
+  $("npLogo").textContent = st.label;
+  $("npName").textContent = st.name;
+  $("npSlogan").textContent = st.slogan;
+  document.querySelectorAll(".station-card").forEach(c => c.classList.remove("active"));
+  document.getElementById("card-" + st.id)?.classList.add("active");
+}
+
+// Démarre un flux MP3 avec fallback
+function startStream(id, urlIndex, myToken){
+  const st = stations[id];
+  if(myToken !== token) return;
+  if(urlIndex >= st.streams.length){
+    if(id === activeId) setStatus("error");
+    return;
+  }
+
+  if(audios[id]){ audios[id].pause(); audios[id].src = ""; }
+
+  const a = new Audio();
+  a.volume = (id === activeId && appPlaying) ? $("volSlider").value / 100 : 0;
+  a.src = st.streams[urlIndex];
+
+  a.onplaying = ()=>{
+    if(myToken !== token){ a.pause(); return; }
+    audios[id] = a;
+    if(id === activeId && appPlaying) setStatus("playing");
+  };
+  a.onwaiting = ()=>{ if(id === activeId && appPlaying) setStatus("loading"); };
+  a.onerror = ()=>{ if(myToken === token) startStream(id, urlIndex + 1, myToken); };
+  a.play().catch(()=>{ if(myToken === token) startStream(id, urlIndex + 1, myToken); });
+}
+
+function initStreams(){
+  token++;
+  const myToken = token;
+  startStream("rmc", 0, myToken);
+  startStream("rtl", 0, myToken);
+}
+
+function switchTo(id){
+  const st = stations[id];
+  // Couper le son de l'ancien
+  if(activeId && activeId !== id && audios[activeId]){
+    audios[activeId].volume = 0;
+  }
+  activeId = id;
+  updateUI(st);
+
+  if(audios[id]){
+    audios[id].volume = appPlaying ? $("volSlider").value / 100 : 0;
+    if(!audios[id].paused) setStatus("playing");
+    else setStatus("loading");
+  } else {
+    setStatus("loading");
+  }
+}
+
+// Détermine la station selon l'heure
+function scheduledStation(){
+  const h = new Date().getHours();
+  return (h >= 7 && h < 15) ? "rmc" : "rtl";
+}
+
+function updateNextSwitch(){
+  const h = new Date().getHours();
+  if(h >= 7 && h < 15){
+    $("nextSwitch").innerHTML = 'Bascule vers <span>RTL</span> à 15h00';
+  } else if(h >= 15){
+    $("nextSwitch").innerHTML = 'Bascule vers <span>RMC</span> demain à 07h00';
+  } else {
+    $("nextSwitch").innerHTML = 'Bascule vers <span>RMC</span> à 07h00';
+  }
+}
+
+// Vérifie toutes les minutes si on doit changer de station
+function checkSchedule(){
+  const should = scheduledStation();
+  if(should !== activeId && appPlaying){
+    switchTo(should);
+  }
+  updateNextSwitch();
+}
+
+// Bouton play/pause
+$("btnPlay").addEventListener("click", ()=>{
+  if(!appPlaying){
+    appPlaying = true;
+    setIcon(true);
+    if(audios[activeId]){ audios[activeId].volume = $("volSlider").value / 100; }
+    setStatus("loading");
+  } else {
+    appPlaying = false;
+    setIcon(false);
+    Object.keys(audios).forEach(id=>{ if(audios[id]) audios[id].volume = 0; });
+    setStatus(null);
+  }
+});
+
+// Volume
+$("volSlider").addEventListener("input", ()=>{
+  const v = parseInt($("volSlider").value);
+  $("volVal").textContent = v;
+  if(appPlaying && audios[activeId]) audios[activeId].volume = v / 100;
+});
+
+// Render cards
+const grid = $("stationGrid");
+Object.values(stations).forEach(s => {
+  const card = document.createElement("div");
+  card.className = "station-card";
+  card.id = "card-" + s.id;
+  card.innerHTML = `<div class="station-icon" style="background:${s.color}">${s.label}</div><div class="station-info"><div class="station-name">${s.name}</div><div class="station-genre">${s.genre}</div></div>`;
+  card.addEventListener("click", ()=>{
+    if(!appPlaying){ appPlaying = true; setIcon(true); }
+    switchTo(s.id);
+    if(audios[s.id]) audios[s.id].volume = $("volSlider").value / 100;
+  });
+  grid.appendChild(card);
+});
+
+// Init
+initStreams();
+const initial = scheduledStation();
+switchTo(initial);
+appPlaying = true;
+setIcon(true);
+updateNextSwitch();
+setInterval(checkSchedule, 60000);
+</script>
+</body>
+</html>
