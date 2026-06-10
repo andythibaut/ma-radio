@@ -1,37 +1,59 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Ma Radio</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --bg: #1a1a18; --surface: #242422; --surface2: #2e2e2c;
-      --border: rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.2);
-      --text: #f0efeb; --text2: #9b9b98; --text3: #4a4a48;
-      --radius: 18px; --radius-sm: 11px;
+function doPlay(st, url, myToken, urlIndex){
+  if(myToken!==token) return;
+  if(hls){ hls.destroy(); hls=null; }
+  if(audio){ audio.pause(); audio.src=""; audio=null; }
+
+  const vol = $("volSlider").value/100;
+
+  function tryNext(){
+    if(myToken!==token) return;
+    const next = urlIndex + 1;
+    if(!st.isHLS && next < st.streams.length){
+      doPlay(st, st.streams[next], myToken, next);
+    } else {
+      showError();
     }
-    html, body { height: 100%; background: var(--bg); color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 2rem 1.25rem; min-height: 100%; }
-    .app { width: 100%; max-width: 400px; }
-    .app-title { font-size: 11px; font-weight: 500; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--text3); text-align: center; margin-bottom: 1.75rem; }
-    .now-playing { background: var(--surface); border-radius: var(--radius);
-      padding: 1.25rem 1.5rem; margin-bottom: 1rem; display: flex; align-items: center;
-      gap: 16px; min-height: 90px; border: 0.5px solid var(--border); }
-    .np-logo { width: 60px; height: 60px; border-radius: var(--radius-sm); display: flex;
-      align-items: center; justify-content: center; font-size: 11px; font-weight: 800;
-      color: #fff; flex-shrink: 0; text-align: center; line-height: 1.2; white-space: pre;
-      background: var(--surface2); }
-    .np-info { flex: 1; min-width: 0; }
-    .np-name { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
-    .np-slogan { font-size: 13px; color: var(--text2); }
-    .np-status { display: none; align-items: center; gap: 7px; margin-top: 7px;
-      font-size: 12px; color: var(--text3); }
-    .np-status.on { display: flex; }
-    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); flex-shrink: 0; }
-    .dot.playing { background: #4caf50; }
-    .dot.load
+  }
+
+  if(st.isHLS){
+    function startHLS(){
+      if(myToken!==token) return;
+      audio = new Audio();
+      audio.volume = vol;
+      if(window.Hls && Hls.isSupported()){
+        hls = new Hls({enableWorker:false});
+        hls.loadSource(url);
+        hls.attachMedia(audio);
+        hls.on(Hls.Events.MANIFEST_PARSED, ()=>{
+          if(myToken!==token) return;
+          audio.play()
+            .then(()=>{ if(myToken!==token){audio.pause();return;} playing=true; setIcon(true); setStatus("playing"); })
+            .catch(()=>{ if(myToken===token) showError(); });
+        });
+        hls.on(Hls.Events.ERROR, (_,d)=>{ if(d.fatal && myToken===token) showError(); });
+      } else if(audio.canPlayType("application/vnd.apple.mpegurl")){
+        audio.src=url;
+        audio.onplaying=()=>{ if(myToken!==token)return; playing=true; setIcon(true); setStatus("playing"); };
+        audio.onerror=()=>{ if(myToken===token) showError(); };
+        audio.play().catch(()=>{ if(myToken===token) showError(); });
+      } else { showError(); }
+    }
+    if(window.Hls){ startHLS(); }
+    else{
+      const s=document.createElement("script");
+      s.src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js";
+      s.onload=startHLS;
+      s.onerror=()=>{ if(myToken===token) showError(); };
+      document.head.appendChild(s);
+    }
+    return;
+  }
+
+  audio = new Audio();
+  audio.volume = vol;
+  audio.src = url;
+  audio.onplaying = ()=>{ if(myToken!==token)return; playing=true; setIcon(true); setStatus("playing"); };
+  audio.onerror   = ()=>{ if(myToken===token) tryNext(); };
+  audio.onwaiting = ()=>{ if(playing && myToken===token) setStatus("loading"); };
+  audio.play().catch(()=>{ if(myToken===token) tryNext(); });
+}
