@@ -1,40 +1,267 @@
-function doPlay(st, url, myToken, urlIndex){
-  if(myToken!==token) return;
-  if(hls){ hls.destroy(); hls=null; }
-  if(audio){ audio.pause(); audio.src=""; audio=null; }
-
-  const vol = $("volSlider").value/100;
-
-  function tryNext(){
-    if(myToken!==token) return;
-    const next = urlIndex + 1;
-    if(!st.isHLS && next < st.streams.length){
-      doPlay(st, st.streams[next], myToken, next);
-    } else {
-      showError();
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Ma Radio</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #1a1a18; --surface: #242422; --surface2: #2e2e2c;
+      --border: rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.2);
+      --text: #f0efeb; --text2: #9b9b98; --text3: #4a4a48;
+      --radius: 18px; --radius-sm: 11px;
     }
+    html, body { height: 100%; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 2rem 1.25rem; min-height: 100%; }
+    .app { width: 100%; max-width: 400px; }
+    .app-title { font-size: 11px; font-weight: 500; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text3); text-align: center; margin-bottom: 1.75rem; }
+    .now-playing { background: var(--surface); border-radius: var(--radius);
+      padding: 1.25rem 1.5rem; margin-bottom: 1rem; display: flex; align-items: center;
+      gap: 16px; min-height: 90px; border: 0.5px solid var(--border); }
+    .np-logo { width: 60px; height: 60px; border-radius: var(--radius-sm); display: flex;
+      align-items: center; justify-content: center; font-size: 11px; font-weight: 800;
+      color: #fff; flex-shrink: 0; text-align: center; line-height: 1.2; white-space: pre;
+      background: var(--surface2); }
+    .np-info { flex: 1; min-width: 0; }
+    .np-name { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+    .np-slogan { font-size: 13px; color: var(--text2); }
+    .np-status { display: none; align-items: center; gap: 7px; margin-top: 7px;
+      font-size: 12px; color: var(--text3); }
+    .np-status.on { display: flex; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); flex-shrink: 0; }
+    .dot.playing { background: #4caf50; }
+    .dot.loading { animation: blink 1s infinite; }
+    .dot.error { background: #e53935; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.15} }
+    .controls { display: flex; align-items: center; gap: 14px; margin-bottom: 1rem; }
+    .btn-play { width: 58px; height: 58px; border-radius: 50%; border: 0.5px solid var(--border2);
+      background: var(--surface); cursor: pointer; display: flex; align-items: center;
+      justify-content: center; flex-shrink: 0; -webkit-tap-highlight-color: transparent;
+      transition: transform 0.1s; }
+    .btn-play:active { transform: scale(0.91); }
+    .btn-play svg { width: 26px; height: 26px; fill: var(--text); }
+    .volume-row { flex: 1; display: flex; align-items: center; gap: 10px; }
+    .volume-row svg { width: 18px; height: 18px; fill: var(--text2); flex-shrink: 0; }
+    input[type=range] { flex: 1; -webkit-appearance: none; height: 4px; border-radius: 2px;
+      background: var(--border2); outline: none; cursor: pointer; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px;
+      border-radius: 50%; background: var(--text); }
+    .vol-label { font-size: 12px; color: var(--text3); min-width: 28px; text-align: right; }
+    .error-banner { display: none; background: rgba(229,57,53,0.1);
+      border: 0.5px solid rgba(229,57,53,0.25); border-radius: var(--radius-sm);
+      padding: 10px 14px; font-size: 12px; color: #ff8a80; margin-bottom: 1rem; line-height: 1.6; }
+    .station-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .station-card { background: var(--surface); border: 0.5px solid var(--border);
+      border-radius: var(--radius); padding: 16px 14px; cursor: pointer; display: flex;
+      align-items: center; gap: 12px; -webkit-tap-highlight-color: transparent;
+      user-select: none; transition: transform 0.1s; }
+    .station-card:active { transform: scale(0.96); }
+    .station-card.active { border-color: var(--border2); background: var(--surface2); }
+    .station-icon { width: 46px; height: 46px; border-radius: var(--radius-sm); display: flex;
+      align-items: center; justify-content: center; font-size: 10px; font-weight: 800;
+      color: #fff; flex-shrink: 0; text-align: center; line-height: 1.2; white-space: pre; }
+    .station-info { min-width: 0; }
+    .station-name { font-size: 14px; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .station-genre { font-size: 11px; color: var(--text2); margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <p class="app-title">Ma Radio</p>
+  <div class="now-playing">
+    <div class="np-logo" id="npLogo">—</div>
+    <div class="np-info">
+      <div class="np-name" id="npName">Sélectionnez</div>
+      <div class="np-slogan" id="npSlogan">une station ci-dessous</div>
+      <div class="np-status" id="npStatus">
+        <div class="dot" id="dot"></div>
+        <span id="statusText"></span>
+      </div>
+    </div>
+  </div>
+  <div class="controls">
+    <button class="btn-play" id="btnPlay" aria-label="Lecture / Pause">
+      <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+    </button>
+    <div class="volume-row">
+      <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+      <input type="range" id="volSlider" min="0" max="100" value="80" step="1">
+      <span class="vol-label" id="volVal">80</span>
+    </div>
+  </div>
+  <div class="error-banner" id="errorBanner">Flux indisponible.</div>
+  <div class="station-grid" id="stationGrid"></div>
+</div>
+<script>
+const PLAY  = '<path d="M8 5v14l11-7z"/>';
+const PAUSE = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+
+const stations = [
+  { id:"rtl", name:"RTL", label:"RTL",
+    slogan:"Première radio de France", genre:"Actualités • Talk", color:"#c0392b",
+    isHLS:false,
+    streams:["https://icecast.rtl.fr/rtl-1-44-128","https://streaming.radio.rtl.fr/rtl-1-44-128","http://streaming.radio.rtl.fr/rtl-1-44-128"] },
+  { id:"rmc", name:"RMC", label:"RMC",
+    slogan:"Info, talk, sport", genre:"Info • Sport • Débats", color:"#1a73e8",
+    isHLS:false,
+    streams:["https://audio.bfmtv.com/rmcradio_128.mp3","http://chai5she.cdn.dvmr.fr/rmcinfo"] },
+  { id:"franceinfo", name:"France Info", label:"France\nInfo",
+    slogan:"Et tout est plus clair", genre:"Info en continu", color:"#b71c1c",
+    isHLS:false,
+    streams:["https://icecast.radiofrance.fr/franceinfo-hifi.aac?id=radiofrance","https://direct.franceinfo.fr/live/franceinfo-midfi.mp3","http://direct.franceinfo.fr/live/franceinfo-midfi.mp3"] },
+  { id:"rmcgold", name:"RMC Gold", label:"RMC\nGold",
+    slogan:"100% années 80-90", genre:"Disco • Funk • Rock", color:"#8a6000",
+    isHLS:true,
+    streams:["https://hls-rmcgold.nextradiotv.com/ssai/32k/media.m3u8"] },
+];
+
+let current=null, playing=false, audio=null, hls=null, token=0;
+const $ = id => document.getElementById(id);
+
+function setIcon(p){ $("playIcon").innerHTML = p ? PAUSE : PLAY; }
+
+function setStatus(s){
+  $("errorBanner").style.display = "none";
+  $("dot").className = "dot";
+  if(!s){ $("npStatus").className = "np-status"; return; }
+  $("npStatus").className = "np-status on";
+  if(s==="loading"){ $("dot").classList.add("loading"); $("statusText").textContent = "Chargement…"; }
+  else if(s==="playing"){ $("dot").classList.add("playing"); $("statusText").textContent = "En direct"; }
+  else { $("dot").classList.add("error"); $("statusText").textContent = "Flux indisponible"; $("errorBanner").style.display = "block"; }
+}
+
+function stopAll(){
+  token++;
+  if(hls){ hls.destroy(); hls = null; }
+  if(audio){ audio.pause(); audio.src = ""; audio = null; }
+  playing = false;
+  setIcon(false);
+}
+
+function showError(){ setStatus("error"); playing = false; setIcon(false); }
+
+// Lecture MP3 classique avec fallback sur les streams suivants
+function playMP3(st, urlIndex, myToken){
+  if(myToken !== token) return;
+  if(urlIndex >= st.streams.length){ showError(); return; }
+
+  if(audio){ audio.pause(); audio.src = ""; audio = null; }
+
+  const a = new Audio();
+  a.volume = $("volSlider").value / 100;
+  a.src = st.streams[urlIndex];
+
+  a.onplaying = ()=>{
+    if(myToken !== token){ a.pause(); return; }
+    audio = a;
+    playing = true;
+    setIcon(true);
+    setStatus("playing");
+  };
+  a.onwaiting = ()=>{ if(playing && myToken === token) setStatus("loading"); };
+  a.onerror = ()=>{ if(myToken === token) playMP3(st, urlIndex + 1, myToken); };
+
+  a.play().catch(()=>{ if(myToken === token) playMP3(st, urlIndex + 1, myToken); });
+}
+
+// Lecture HLS — un seul flux, erreur directe si ça rate
+function playHLS(st, myToken){
+  if(myToken !== token) return;
+  if(audio){ audio.pause(); audio.src = ""; audio = null; }
+
+  const url = st.streams[0];
+  const a = new Audio();
+  a.volume = $("volSlider").value / 100;
+
+  function onSuccess(){
+    if(myToken !== token){ a.pause(); return; }
+    audio = a;
+    playing = true;
+    setIcon(true);
+    setStatus("playing");
   }
 
+  if(window.Hls && Hls.isSupported()){
+    hls = new Hls({enableWorker:false});
+    hls.loadSource(url);
+    hls.attachMedia(a);
+    hls.on(Hls.Events.MANIFEST_PARSED, ()=>{
+      if(myToken !== token) return;
+      a.play().then(onSuccess).catch(()=>{ if(myToken === token) showError(); });
+    });
+    hls.on(Hls.Events.ERROR, (_, d)=>{ if(d.fatal && myToken === token) showError(); });
+  } else if(a.canPlayType("application/vnd.apple.mpegurl")){
+    a.src = url;
+    a.onplaying = onSuccess;
+    a.onerror = ()=>{ if(myToken === token) showError(); };
+    a.play().catch(()=>{ if(myToken === token) showError(); });
+  } else {
+    showError();
+  }
+}
+
+function loadHLSlib(callback){
+  if(window.Hls){ callback(); return; }
+  const s = document.createElement("script");
+  s.src = "https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js";
+  s.onload = callback;
+  s.onerror = callback; // on essaie quand même (canPlayType en fallback)
+  document.head.appendChild(s);
+}
+
+function startPlay(st){
+  stopAll();
+  const myToken = token;
+  setStatus("loading");
   if(st.isHLS){
-    function startHLS(){
-      if(myToken!==token) return;
-      audio = new Audio();
-      audio.volume = vol;
-      if(window.Hls && Hls.isSupported()){
-        hls = new Hls({enableWorker:false});
-        hls.loadSource(url);
-        hls.attachMedia(audio);
-        hls.on(Hls.Events.MANIFEST_PARSED, ()=>{
-          if(myToken!==token) return;
-          audio.play()
-            .then(()=>{ if(myToken!==token){audio.pause();return;} playing=true; setIcon(true); setStatus("playing"); })
-            .catch(()=>{ if(myToken===token) showError(); });
-        });
-        hls.on(Hls.Events.ERROR, (_,d)=>{ if(d.fatal && myToken===token) showError(); });
-      } else if(audio.canPlayType("application/vnd.apple.mpegurl")){
-        audio.src=url;
-        audio.onplaying=()=>{ if(myToken!==token)return; playing=true; setIcon(true); setStatus("playing"); };
-        audio.onerror=()=>{ if(myToken===token) showError(); };
+    loadHLSlib(()=> playHLS(st, myToken));
+  } else {
+    playMP3(st, 0, myToken);
+  }
+}
+
+function selectStation(st){
+  document.querySelectorAll(".station-card").forEach(c => c.classList.remove("active"));
+  document.getElementById("card-" + st.id)?.classList.add("active");
+  $("npLogo").style.background = st.color;
+  $("npLogo").style.color = "#fff";
+  $("npLogo").textContent = st.label;
+  $("npName").textContent = st.name;
+  $("npSlogan").textContent = st.slogan;
+  current = st;
+  startPlay(st);
+}
+
+$("btnPlay").addEventListener("click", ()=>{
+  if(!current) return;
+  if(playing){ stopAll(); setStatus(null); }
+  else startPlay(current);
+});
+
+$("volSlider").addEventListener("input", ()=>{
+  const v = parseInt($("volSlider").value);
+  $("volVal").textContent = v;
+  if(audio) audio.volume = v / 100;
+});
+
+const grid = $("stationGrid");
+stations.forEach(s => {
+  const card = document.createElement("div");
+  card.className = "station-card";
+  card.id = "card-" + s.id;
+  card.innerHTML = `<div class="station-icon" style="background:${s.color}">${s.label}</div><div class="station-info"><div class="station-name">${s.name}</div><div class="station-genre">${s.genre}</div></div>`;
+  card.addEventListener("click", ()=> selectStation(s));
+  grid.appendChild(card);
+});
+</script>
+</body>
+</html>        audio.onerror=()=>{ if(myToken===token) showError(); };
         audio.play().catch(()=>{ if(myToken===token) showError(); });
       } else { showError(); }
     }
